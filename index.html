@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fog of War - Buenos Aires</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: sans-serif; background: #000; }
+    #map { height: 100%; width: 100%; }
+    #info {
+      position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%);
+      background: rgba(20, 20, 20, 0.9); color: #fff; padding: 12px 22px; border-radius: 30px; 
+      font-weight: bold; box-shadow: 0 4px 20px rgba(0,0,0,0.5); z-index: 10;
+      border: 1px solid rgba(255,255,255,0.2); font-size: 14px; text-align: center;
+    }
+    #gps-btn {
+      position: absolute; top: 20px; right: 20px; background: #FF3366; color: white;
+      border: none; padding: 10px 16px; border-radius: 20px; font-weight: bold;
+      cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="info">Buscando señal GPS... 🛰️</div>
+  <button id="gps-btn" onclick="centrarEnUsuario()">Centrar GPS 📍</button>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <script>
+    mapboxgl.accessToken = 'pk.eyJ1Ijoibmljb2NyYWtjMjQwIiwiYSI6ImNtdXhqMnVrZTA4cjAyeW91MWU0YTIxczMifQ.fVz7VGxIVYTnaeei6C52gw';
+
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center: [-58.3816, -34.6037], // Obelisco por defecto al iniciar
+      zoom: 16
+    });
+
+    const RADIUS_METERS = 100; // Radio de 100 metros
+    const FOG_SOURCE_ID = 'fog-source';
+    const FOG_LAYER_ID = 'fog-layer';
+    
+    let userMarker = null;
+    let exploredPolygon = null;
+    let lastUserCoords = null;
+
+    function updateExploration(lng, lat) {
+      const currentPoint = [lng, lat];
+      lastUserCoords = currentPoint;
+      
+      const newCircle = turf.circle(currentPoint, RADIUS_METERS, { steps: 64, units: 'meters' });
+
+      if (!exploredPolygon) {
+        exploredPolygon = newCircle;
+      } else {
+        try {
+          const unionResult = turf.union(exploredPolygon, newCircle);
+          if (unionResult) {
+            exploredPolygon = unionResult;
+          }
+        } catch (err) {
+          console.error("Error al unir polígonos:", err);
+        }
+      }
+
+      let holesCoords = [];
+      if (exploredPolygon.geometry.type === 'Polygon') {
+        holesCoords = [exploredPolygon.geometry.coordinates[0]];
+      } else if (exploredPolygon.geometry.type === 'MultiPolygon') {
+        holesCoords = exploredPolygon.geometry.coordinates.map(poly => poly[0]);
+      }
+
+      const fogFeature = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [[-180, 85], [180, 85], [180, -85], [-180, -85], [-180, 85]],
+            ...holesCoords
+          ]
+        }
+      };
+
+      if (map.getSource(FOG_SOURCE_ID)) {
+        map.getSource(FOG_SOURCE_ID).setData(fogFeature);
+      } else {
+        map.addSource(FOG_SOURCE_ID, { type: 'geojson', data: fogFeature });
+        map.addLayer({
+          id: FOG_LAYER_ID,
+          type: 'fill',
+          source: FOG_SOURCE_ID,
+          paint: {
+            'fill-color': '#ffffff',
+            'fill-opacity': 0.97
+          }
+        });
+      }
+
+      const lngLat = { lng, lat };
+      if (!userMarker) {
+        userMarker = new mapboxgl.Marker({ color: '#FF3366' })
+          .setLngLat(lngLat)
+          .addTo(map);
+      } else {
+        userMarker.setLngLat(lngLat);
+      }
+    }
+
+    function centrarEnUsuario() {
+      if (lastUserCoords) {
+        map.easeTo({ center: lastUserCoords, zoom: 17, duration: 800 });
+      }
+    }
+
+    map.on('load', () => {
+      // Iniciamos con una zona base en el Obelisco por si el GPS tarda en conectar
+      updateExploration(-58.3816, -34.6037);
+
+      if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition(
+          (position) => {
+            const lng = position.coords.longitude;
+            const lat = position.coords.latitude;
+
+            document.getElementById('info').innerText = "📍 GPS Activo: Explorando terreno";
+            updateExploration(lng, lat);
+            
+            // Opcional: si querés que la cámara lo siga automáticamente en cada paso, descomentá la siguiente línea:
+            // map.easeTo({ center: [lng, lat], duration: 500 });
+          },
+          (error) => {
+            console.warn("Error de GPS o permisos denegados:", error.message);
+            document.getElementById('info').innerText = "⚠️ GPS no disponible. Hacé clic para simular movimiento.";
+            
+            // Fallback: Si no hay GPS (ej. estás en PC), podés seguir haciendo clic para testear
+            map.on('click', (e) => {
+              const { lng, lat } = e.lngLat;
+              updateExploration(lng, lat);
+              map.easeTo({ center: [lng, lat], duration: 600 });
+              document.getElementById('info').innerText = `📍 Posición simulada guardada`;
+            });
+          },
+          {
+            enableHighAccuracy: true,
+            maximumAge: 2000,
+            timeout: 10000
+          }
+        );
+      } else {
+        document.getElementById('info').innerText = "❌ Tu navegador no soporta geolocalización";
+      }
+    });
+  </script>
+</body>
+</html>
