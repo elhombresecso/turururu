@@ -1,6 +1,6 @@
 {
-  "name": "Fog of War Buenos Aires",
-  "short_name": "FogBA",
+  "name": "Descubriendo Buenos aires",
+  "short_name": "Descubriendo Bs As",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#000000",
@@ -8,7 +8,7 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "playback.ico",
+      "src": "playback.ico"
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
